@@ -129,9 +129,9 @@ class BibleAPI:
         headers = {"Authorization": f"Token {self.api_key}"}
         params = {
             "q": reference,
-            "include-headings": True,
-            "include-verse-numbers": True,
-            "include-short-copyright": True
+            "include-headings": "true",
+            "include-verse-numbers": "true", 
+            "include-short-copyright": "true"
         }
         
         try:
@@ -341,8 +341,8 @@ async def main():
 <a href="{link}">Read on Bible Gateway</a>
 
 <b>Follow up Questions:</b>
-• What do you learn about God/Jesus?
-• What do you learn about yourselves?
+• What do you learn about God?
+• What do you learn about yourself?
 
 React to this message once read. 📖"""
     else:
