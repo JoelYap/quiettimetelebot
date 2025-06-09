@@ -12,7 +12,7 @@ jobs:
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
-      
+        
     - name: Set up Python
       uses: actions/setup-python@v4
       with:
@@ -26,6 +26,6 @@ jobs:
       env:
         TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
         TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-        ESV_API_KEY: ${{ secrets.ESV_API_KEY }}
+        ESV_API_KEY: ${{ secrets.ESV_API_KEY }}  # Optional - leave empty for free KJV API
       run: |
         python bot.py

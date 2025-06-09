@@ -27,7 +27,13 @@ class ReadingPlan:
     start_date: str
     daily_time: str
     timezone: str
-    current_day: int = 1
+    
+    def get_current_day(self) -> int:
+        """Calculate current day based on date difference from start date"""
+        start = datetime.strptime(self.start_date, '%Y-%m-%d').date()
+        today = datetime.now().date()
+        days_diff = (today - start).days
+        return max(1, days_diff + 1)  # Day 1 is the start date
 
 class BibleReferenceParser:
     """Simple Bible reference parser"""
@@ -76,86 +82,79 @@ class BibleReferenceParser:
         return chapters
 
 class BibleAPI:
-    """ESV Bible API client for retrieving Bible passages"""
+    """Simple Bible API client - supports both free and ESV APIs"""
     
-    def __init__(self, api_key: str):
-        if not api_key:
-            raise ValueError("ESV API key is required")
+    def __init__(self, api_key: str = None, use_free_api: bool = False):
         self.api_key = api_key
-        self.base_url = "https://api.esv.org/v3"
+        self.use_free_api = use_free_api
+        
+        if use_free_api:
+            self.base_url = "https://bible-api.com"
+            self.version = "kjv"  # Free API uses KJV
+        else:
+            self.base_url = "https://api.esv.org/v3"
+            self.version = "ESV"
     
     async def get_passage(self, reference: str) -> Optional[Dict]:
-        """Retrieve Bible passage from ESV API
-        
-        Args:
-            reference: Bible reference (e.g., "John 3:16", "Romans 1")
+        """Get passage from API"""
+        if self.use_free_api:
+            return await self._get_free_passage(reference)
+        else:
+            return await self._get_esv_passage(reference)
+    
+    async def _get_free_passage(self, reference: str) -> Optional[Dict]:
+        """Get passage from free Bible API (KJV)"""
+        try:
+            # Format reference for bible-api.com (e.g., "psalms 1:1")
+            formatted_ref = reference.lower().replace(' ', '%20')
+            url = f"{self.base_url}/{formatted_ref}"
             
-        Returns:
-            Dict with 'text', 'reference', and 'link' keys, or None if failed
-        """
-        if not reference or not reference.strip():
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url) as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        return {
+                            'text': data.get('text', ''),
+                            'reference': data.get('reference', reference),
+                            'link': self._bible_gateway_link(reference, 'KJV'),
+                            'version': 'KJV'
+                        }
             return None
-            
-        headers = {
-            "Authorization": f"Token {self.api_key}",
-            "User-Agent": "QuietTimeTeleBot/1.0"
-        }
-        
+        except Exception as e:
+            print(f"Free API Error: {e}")
+            return None
+    
+    async def _get_esv_passage(self, reference: str) -> Optional[Dict]:
+        """Get passage from ESV API"""
+        headers = {"Authorization": f"Token {self.api_key}"}
         params = {
-            "q": reference.strip(),
-            "include-headings": "true",
-            "include-verse-numbers": "true",
-            "include-short-copyright": "true",
-            "include-footnotes": "false",
-            "include-audio-link": "false"
+            "q": reference,
+            "include-headings": True,
+            "include-verse-numbers": True,
+            "include-short-copyright": True
         }
         
         try:
-            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10)) as session:
+            async with aiohttp.ClientSession() as session:
                 url = f"{self.base_url}/passage/text/"
                 async with session.get(url, headers=headers, params=params) as response:
                     if response.status == 200:
                         data = await response.json()
-                        passages = data.get('passages', [])
-                        
-                        if not passages or not passages[0].strip():
-                            return None
-                            
                         return {
-                            'text': passages[0].strip(),
+                            'text': data.get('passages', [''])[0],
                             'reference': reference,
-                            'link': self._bible_gateway_link(reference),
-                            'copyright': data.get('copyright', '')
+                            'link': self._bible_gateway_link(reference, 'ESV'),
+                            'version': 'ESV'
                         }
-                    elif response.status == 401:
-                        print(f"ESV API: Invalid API key")
-                    elif response.status == 403:
-                        print(f"ESV API: Access forbidden - check API key permissions")
-                    elif response.status == 429:
-                        print(f"ESV API: Rate limit exceeded")
-                    else:
-                        print(f"ESV API: HTTP {response.status}")
-                        
-        except asyncio.TimeoutError:
-            print(f"ESV API: Request timeout for {reference}")
-        except aiohttp.ClientError as e:
-            print(f"ESV API: Connection error - {e}")
+            return None
         except Exception as e:
-            print(f"ESV API: Unexpected error - {e}")
-            
-        return None
+            print(f"ESV API Error: {e}")
+            return None
     
-    def _bible_gateway_link(self, reference: str) -> str:
-        """Generate Bible Gateway link for reference
-        
-        Args:
-            reference: Bible reference
-            
-        Returns:
-            Formatted Bible Gateway URL
-        """
+    def _bible_gateway_link(self, reference: str, version: str = "ESV") -> str:
+        """Generate Bible Gateway link"""
         encoded = urllib.parse.quote(reference)
-        return f"https://www.biblegateway.com/passage/?search={encoded}&version=ESV"
+        return f"https://www.biblegateway.com/passage/?search={encoded}&version={version}"
 
 class TelegramBot:
     """Simple Telegram bot client"""
@@ -168,41 +167,52 @@ class TelegramBot:
         """Send message via Telegram API"""
         url = f"{self.base_url}/sendMessage"
         data = {
-            "chat_id": chat_id,
-            "text": text,
+            "chat_id": str(chat_id),
+            "text": str(text),
             "parse_mode": "HTML",
-            "disable_web_page_preview": "false"
+            "disable_web_page_preview": "false"  # String instead of boolean
         }
         
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.post(url, json=data) as response:
+                    if response.status != 200:
+                        error_text = await response.text()
+                        print(f"Telegram API Error {response.status}: {error_text}")
                     return response.status == 200
         except Exception as e:
             print(f"Telegram Error: {e}")
             return False
 
 class ReadingPlanManager:
-    """Manage reading plans with simple file storage"""
+    """Manage reading plans with date-based calculation (no file storage needed)"""
     
     PLAN_FILE = "reading_plan.json"
     
     def load_plan(self) -> Optional[ReadingPlan]:
-        """Load reading plan from file"""
+        """Load reading plan configuration from file"""
         try:
             if os.path.exists(self.PLAN_FILE):
                 with open(self.PLAN_FILE, 'r') as f:
                     data = json.load(f)
+                    # Remove current_day if it exists (legacy)
+                    data.pop('current_day', None)
                     return ReadingPlan(**data)
         except Exception as e:
             print(f"Error loading plan: {e}")
         return None
     
     def save_plan(self, plan: ReadingPlan):
-        """Save reading plan to file"""
+        """Save reading plan configuration to file (no need to save current_day)"""
         try:
             with open(self.PLAN_FILE, 'w') as f:
-                json.dump(plan.__dict__, f, indent=2)
+                json.dump({
+                    'references': plan.references,
+                    'start_date': plan.start_date,
+                    'daily_time': plan.daily_time,
+                    'timezone': plan.timezone
+                }, f, indent=2)
+            print(f"Saved reading plan configuration")
         except Exception as e:
             print(f"Error saving plan: {e}")
     
@@ -212,22 +222,42 @@ class ReadingPlanManager:
         return total_chapters  # One chapter per day
     
     def get_today_reference(self, plan: ReadingPlan, references: List[Dict]) -> Optional[str]:
-        """Get today's reading reference"""
+        """Get today's reading reference based on current date"""
+        current_day = plan.get_current_day()
         total_chapters = 0
         
         for ref in references:
             for chapter in ref['chapters']:
                 total_chapters += 1
-                if total_chapters == plan.current_day:
+                if total_chapters == current_day:
                     return f"{ref['book']} {chapter}"
         
         return None
+    
+    def is_plan_complete(self, plan: ReadingPlan, references: List[Dict]) -> bool:
+        """Check if reading plan is completed"""
+        current_day = plan.get_current_day()
+        total_chapters = sum(ref['chapter_count'] for ref in references)
+        return current_day > total_chapters
+    
+    def get_plan_progress(self, plan: ReadingPlan, references: List[Dict]) -> Dict:
+        """Get reading plan progress information"""
+        current_day = plan.get_current_day()
+        total_chapters = sum(ref['chapter_count'] for ref in references)
+        progress_percent = min(100, (current_day - 1) / total_chapters * 100) if total_chapters > 0 else 0
+        
+        return {
+            'current_day': current_day,
+            'total_days': total_chapters,
+            'progress_percent': progress_percent,
+            'is_complete': current_day > total_chapters
+        }
     
     def is_time_to_send(self, plan: ReadingPlan) -> bool:
         """Check if it's time to send today's verse"""
         # Simple timezone calculation
         tz_offset = TIMEZONES.get(plan.timezone, 0)
-        current_utc = datetime.now(datetime.timezone.utc)
+        current_utc = datetime.utcnow()
         local_time = current_utc + timedelta(hours=tz_offset)
         
         # Parse daily time (e.g., "08:00")
@@ -242,118 +272,114 @@ class ReadingPlanManager:
         diff = abs((current_datetime - target_datetime).total_seconds())
         return diff <= 3600  # Within 1 hour
 
-def format_passage_message(passage_data: Dict, current_day: int) -> str:
-    """Format message with Bible passage text"""
-    text = passage_data['text']
+async def main():
+    """Main bot logic"""
+    # Initialize components
+    parser = BibleReferenceParser()
+    plan_manager = ReadingPlanManager()
+    telegram = TelegramBot(TELEGRAM_TOKEN)
     
-    # Truncate if too long for Telegram
-    if len(text) > 3000:
-        text = text[:3000] + "..."
+    # Choose API type based on whether ESV_API_KEY is provided
+    use_free_api = not ESV_API_KEY or ESV_API_KEY == "your_esv_api_key_here" or ESV_API_KEY.strip() == ""
+    bible_api = BibleAPI(ESV_API_KEY if not use_free_api else None, use_free_api=use_free_api)
     
-    message = f"""📖 <b>Today's Bible Reading - Day {current_day}</b>
+    if use_free_api:
+        print("Using free Bible API (KJV translation)")
+    else:
+        print("Using ESV API")
+    
+    # Load or create reading plan
+    plan = plan_manager.load_plan()
+    if not plan:
+        # Create initial plan if none exists
+        print("Creating new reading plan...")
+        plan = ReadingPlan(
+            references="Psalms 1-15,120-134",
+            start_date=datetime.now().strftime('%Y-%m-%d'),
+            daily_time="08:00",
+            timezone="SGT"
+        )
+        plan_manager.save_plan(plan)
+    
+    # Get progress information
+    progress = plan_manager.get_plan_progress(plan, [])  # Will calculate based on references
+    print(f"📅 Reading plan started: {plan.start_date}")
+    print(f"📖 Current day: {progress['current_day']}")
+    
+    # Parse references
+    references = parser.parse(plan.references)
+    if not references:
+        print("❌ No valid references found")
+        return
+    
+    # Update progress with actual references
+    progress = plan_manager.get_plan_progress(plan, references)
+    
+    # Check if reading plan is completed
+    if progress['is_complete']:
+        print("🎉 Reading plan completed! All chapters have been read.")
+        return
+    
+    # Get today's reference
+    today_ref = plan_manager.get_today_reference(plan, references)
+    if not today_ref:
+        print("❌ No reading found for today")
+        return
+    
+    print(f"📖 Today's reading: {today_ref} (Day {progress['current_day']}/{progress['total_days']})")
+    
+    # Get passage from API
+    passage_data = await bible_api.get_passage(today_ref)
+    if not passage_data:
+        # Fallback message
+        version = "KJV" if use_free_api else "ESV"
+        link = bible_api._bible_gateway_link(today_ref, version)
+        message = f"""📖 <b>Today's Bible Reading - Day {progress['current_day']}</b>
 
-<b>{passage_data['reference']}</b>
+<b>{today_ref}</b>
+
+<a href="{link}">Read on Bible Gateway</a>
+
+<b>Follow up Questions:</b>
+• What do you learn about God/Jesus?
+• What do you learn about yourselves?
+
+React to this message once read. 📖"""
+    else:
+        # Format with passage text
+        text = passage_data['text']
+        if len(text) > 3000:  # Telegram limit
+            text = text[:3000] + "..."
+        
+        copyright_text = "(ESV)" if passage_data['version'] == 'ESV' else "(KJV)"
+        
+        message = f"""📖 <b>Today's Bible Reading - Day {progress['current_day']}</b>
+
+<b>{today_ref}</b>
 
 {text}
 
 <a href="{passage_data['link']}">Read on Bible Gateway</a>
 
 <b>Follow up Questions:</b>
-- What do you learn about God/Jesus?
-- What do you learn about yourselves?
+• What do you learn about God/Jesus?
+• What do you learn about yourselves?
 
-React to this message once read. 📖"""
-    
-    return message
+React to this message once read. 📖
 
-def format_fallback_message(reference: str, current_day: int, bible_api: BibleAPI) -> str:
-    """Format fallback message when API fails"""
-    return f"""📖 <b>Today's Bible Reading - Day {current_day}</b>
-
-<b>{reference}</b>
-
-<a href="{bible_api._bible_gateway_link(reference)}">Read on Bible Gateway</a>
-
-<b>Follow up Questions:</b>
-- What do you learn about God/Jesus?
-- What do you learn about yourselves?
-
-React to this message once read. 📖"""
-
-async def main():
-    """Main bot logic for sending daily Bible readings"""
-    # Validate required environment variables
-    if not ESV_API_KEY:
-        print("Error: ESV_API_KEY environment variable is required")
-        return
-    if not TELEGRAM_TOKEN:
-        print("Error: TELEGRAM_TOKEN environment variable is required") 
-        return
-    if not TELEGRAM_CHAT_ID:
-        print("Error: TELEGRAM_CHAT_ID environment variable is required")
-        return
-    
-    # Initialize components
-    parser = BibleReferenceParser()
-    
-    try:
-        bible_api = BibleAPI(ESV_API_KEY)
-        telegram = TelegramBot(TELEGRAM_TOKEN)
-        plan_manager = ReadingPlanManager()
-    except ValueError as e:
-        print(f"Initialization error: {e}")
-        return
-    
-    # For demo purposes, create a sample plan if none exists
-    plan = plan_manager.load_plan()
-    if not plan:
-        # Sample plan - you would set this up via conversation later
-        plan = ReadingPlan(
-            references="Psalms 1-15,120-134",
-            start_date=datetime.now().strftime('%Y-%m-%d'),
-            daily_time="08:00",
-            timezone="SGT",
-            current_day=1
-        )
-        plan_manager.save_plan(plan)
-        print("Created sample reading plan")
-    
-    # Parse references
-    references = parser.parse(plan.references)
-    if not references:
-        print("No valid references found")
-        return
-    
-    # Check if it's time to send (for GitHub Actions, we'll send regardless)
-    today_ref = plan_manager.get_today_reference(plan, references)
-    if not today_ref:
-        print("Reading plan completed!")
-        return
-    
-    print(f"Today's reading: {today_ref}")
-    
-    # Get passage from API
-    passage_data = await bible_api.get_passage(today_ref)
-    
-    if not passage_data:
-        # Fallback message when API fails
-        print(f"Failed to retrieve passage for {today_ref}, using fallback")
-        message = format_fallback_message(today_ref, plan.current_day, bible_api)
-    else:
-        # Format message with passage text
-        message = format_passage_message(passage_data, plan.current_day)
-        print(f"Retrieved passage for {today_ref} ({len(passage_data['text'])} chars)")
+<i>{copyright_text}</i>"""
     
     # Send message
     success = await telegram.send_message(TELEGRAM_CHAT_ID, message)
     
     if success:
-        # Update plan for next day
-        plan.current_day += 1
-        plan_manager.save_plan(plan)
-        print(f"Sent day {plan.current_day - 1} successfully")
+        print(f"✅ Successfully sent day {progress['current_day']}")
+        print(f"📊 Progress: {progress['current_day']}/{progress['total_days']} chapters ({progress['progress_percent']:.1f}%)")
+        
+        if progress['current_day'] >= progress['total_days']:
+            print("🎉 This was the final chapter of your reading plan!")
     else:
-        print("Failed to send message")
+        print("❌ Failed to send message")
 
 if __name__ == "__main__":
     asyncio.run(main())
