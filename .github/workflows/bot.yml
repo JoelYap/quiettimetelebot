@@ -12,7 +12,7 @@ jobs:
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
-        
+      
     - name: Set up Python
       uses: actions/setup-python@v4
       with:
@@ -29,3 +29,17 @@ jobs:
         ESV_API_KEY: ${{ secrets.ESV_API_KEY }}  # Optional - leave empty for free KJV API
       run: |
         python bot.py
+        
+    - name: Commit reading progress
+      run: |
+        git config --local user.email "action@github.com"
+        git config --local user.name "GitHub Action"
+        git add reading_plan.json
+        if git diff --staged --quiet; then
+          echo "No changes to commit"
+        else
+          git commit -m "📖 Update reading progress - Day $(date +%Y-%m-%d)"
+          git push
+        fi
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
