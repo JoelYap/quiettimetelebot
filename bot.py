@@ -355,8 +355,6 @@ React to this message once read. 📖"""
         
         message = f"""📖 <b>Today's Bible Reading - Day {progress['current_day']}</b>
 
-<b>{today_ref}</b>
-
 {text}
 
 <a href="{passage_data['link']}">Read on Bible Gateway</a>
