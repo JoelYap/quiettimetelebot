@@ -363,9 +363,7 @@ React to this message once read. 📖"""
 • What do you learn about God/Jesus?
 • What do you learn about yourselves?
 
-React to this message once read. 📖
-
-<i>{copyright_text}</i>"""
+React to this message once read. 📖"""
     
     # Send message
     success = await telegram.send_message(TELEGRAM_CHAT_ID, message)
